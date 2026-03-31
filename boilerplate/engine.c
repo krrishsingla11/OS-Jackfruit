@@ -554,6 +554,16 @@ static void handle_control_request(int client_fd, supervisor_ctx_t *ctx, const c
                 req.soft_limit_bytes, req.hard_limit_bytes);
 
         /* Start reading logs from pipe in background */
+        log_item_t item;
+        memset(&item, 0, sizeof(item));
+        strncpy(item.container_id, req.container_id, sizeof(item.container_id) - 1);
+        ssize_t n;
+        while ((n = read(pipefd[0], item.data, sizeof(item.data) - 1)) > 0) {
+            item.length = n;
+            bounded_buffer_push(&ctx->log_buffer, &item);
+            memset(&item, 0, sizeof(item));
+            strncpy(item.container_id, req.container_id, sizeof(item.container_id) - 1);
+        }
         close(pipefd[0]);
 
         resp.status = 0;
