@@ -1,111 +1,117 @@
-# Multi-Container Runtime
+# Jackfruit — Supervised Container Runtime
 
-A lightweight Linux container runtime in C with a long-running supervisor and a kernel-space memory monitor.
+## Team Information
+| Name | SRN |
+|------|-----|
+| Krrish Singla | PES1UG24AM141 |
+| Kishan K Shenoy | PES1UG24AM138 |
 
-Read [`project-guide.md`](project-guide.md) for the full project specification.
+## Build Instructions
 
----
-
-## Getting Started
-
-### 1. Fork the Repository
-
-1. Go to [github.com/shivangjhalani/OS-Jackfruit](https://github.com/shivangjhalani/OS-Jackfruit)
-2. Click **Fork** (top-right)
-3. Clone your fork:
-
+### Prerequisites
+- Ubuntu 22.04 or 24.04 (not WSL)
+- Secure Boot OFF
+- Install dependencies:
 ```bash
-git clone https://github.com/<your-username>/OS-Jackfruit.git
-cd OS-Jackfruit
+sudo apt install -y build-essential linux-headers-$(uname -r) git
 ```
 
-### 2. Set Up Your VM
-
-You need an **Ubuntu 22.04 or 24.04** VM with **Secure Boot OFF**. WSL will not work.
-
-Install dependencies:
-
-```bash
-sudo apt update
-sudo apt install -y build-essential linux-headers-$(uname -r)
-```
-
-### 3. Run the Environment Check
-
+### Build
 ```bash
 cd boilerplate
-chmod +x environment-check.sh
-sudo ./environment-check.sh
+sudo make
 ```
 
-Fix any issues reported before moving on.
-
-### 4. Prepare the Root Filesystem
-
+### Download Alpine rootfs
 ```bash
-mkdir rootfs-base
+mkdir -p boilerplate/rootfs
 wget https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.3-x86_64.tar.gz
-tar -xzf alpine-minirootfs-3.20.3-x86_64.tar.gz -C rootfs-base
-
-# Make one writable copy per container you plan to run
-cp -a ./rootfs-base ./rootfs-alpha
-cp -a ./rootfs-base ./rootfs-beta
+tar -xzf alpine-minirootfs-3.20.3-x86_64.tar.gz -C boilerplate/rootfs
 ```
 
-Do not commit `rootfs-base/` or `rootfs-*` directories to your repository.
+## Run Instructions
 
-### 5. Understand the Boilerplate
-
-The `boilerplate/` folder contains starter files:
-
-| File                   | Purpose                                             |
-| ---------------------- | --------------------------------------------------- |
-| `engine.c`             | User-space runtime and supervisor skeleton          |
-| `monitor.c`            | Kernel module skeleton                              |
-| `monitor_ioctl.h`      | Shared ioctl command definitions                    |
-| `Makefile`             | Build targets for both user-space and kernel module |
-| `cpu_hog.c`            | CPU-bound test workload                             |
-| `io_pulse.c`           | I/O-bound test workload                             |
-| `memory_hog.c`         | Memory-consuming test workload                      |
-| `environment-check.sh` | VM environment preflight check                      |
-
-Use these as your starting point. You are free to restructure the repository however you want — the submission requirements are listed in the project guide.
-
-### 6. Build and Verify
-
+### 1. Load kernel module
 ```bash
-cd boilerplate
-make
+sudo insmod boilerplate/monitor.ko
 ```
 
-If this compiles without errors, your environment is ready.
-
-### 7. GitHub Actions Smoke Check
-
-Your fork will inherit a minimal GitHub Actions workflow from this repository.
-
-That workflow only performs CI-safe checks:
-
-- `make -C boilerplate ci`
-- user-space binary compilation (`engine`, `memory_hog`, `cpu_hog`, `io_pulse`)
-- `./boilerplate/engine` with no arguments must print usage and exit with a non-zero status
-
-The CI-safe build command is:
-
+### 2. Start supervisor (Terminal 1)
 ```bash
-make -C boilerplate ci
+sudo ./boilerplate/engine supervisor boilerplate/rootfs
 ```
 
-This smoke check does not test kernel-module loading, supervisor runtime behavior, or container execution.
+### 3. Use CLI commands (Terminal 2)
+```bash
+# Start a container
+sudo ./boilerplate/engine start <id> boilerplate/rootfs "<command>"
 
----
+# List containers
+sudo ./boilerplate/engine ps
 
-## What to Do Next
+# View logs
+sudo ./boilerplate/engine logs <id>
 
-Read [`project-guide.md`](project-guide.md) end to end. It contains:
+# Stop a container
+sudo ./boilerplate/engine stop <id>
+```
 
-- The six implementation tasks (multi-container runtime, CLI, logging, kernel monitor, scheduling experiments, cleanup)
-- The engineering analysis you must write
-- The exact submission requirements, including what your `README.md` must contain (screenshots, analysis, design decisions)
+### 4. Unload kernel module
+```bash
+sudo rmmod monitor
+```
 
-Your fork's `README.md` should be replaced with your own project documentation as described in the submission package section of the project guide. (As in get rid of all the above content and replace with your README.md)
+## Engineering Analysis
+
+### 1. Linux Namespaces
+We use CLONE_NEWPID, CLONE_NEWUTS, and CLONE_NEWNS flags with clone() to isolate each container. PID namespace gives the container its own process tree. UTS namespace allows setting a unique hostname. Mount namespace isolates the filesystem view.
+
+### 2. Process Lifecycle
+The supervisor uses clone() to spawn containers and installs a SIGCHLD handler to reap dead children with waitpid(). This prevents zombie processes. Container state is tracked in a linked list protected by a mutex.
+
+### 3. IPC and Synchronization
+The CLI communicates with the supervisor via a UNIX domain socket at /tmp/mini_runtime.sock. The bounded buffer uses pthread_mutex and pthread_cond (not_full, not_empty) for safe producer-consumer log passing between container pipes and the logger thread.
+
+### 4. Memory Management
+The kernel module tracks RSS (Resident Set Size) of each container process using get_mm_rss(). A kernel timer fires every second to check memory usage. Soft limit triggers a warning via printk. Hard limit sends SIGKILL to the process.
+
+### 5. CPU Scheduling
+Linux uses the Completely Fair Scheduler (CFS). We use nice values to influence scheduling priority. A container with nice=0 gets more CPU time than one with nice=10. Our experiments confirmed this behavior.
+
+## Design Decisions
+
+### Bounded Buffer
+We chose a circular array buffer with capacity LOG_BUFFER_CAPACITY. The producer blocks when full and wakes up when space is available. The consumer drains the buffer and writes to per-container log files.
+
+### Kernel Module Lock
+We chose a mutex over a spinlock because our timer callback and ioctl handler can sleep. Spinlocks cannot be held while sleeping, making mutex the correct choice for our code paths.
+
+### UNIX Socket for IPC
+We chose a UNIX domain socket over a named FIFO because sockets support bidirectional communication and allow the supervisor to send responses back to the CLI client easily.
+
+## Scheduler Experiment Results
+
+### Experiment 1: Different nice values
+| Container | Command | Nice Value | Real Time |
+|-----------|---------|------------|-----------|
+| c1 | cpu_hog | 0 | 0m0.021s |
+| c2 | cpu_hog | 10 | 0m0.019s |
+
+### Experiment 2: CPU-bound vs I/O-bound
+| Container | Type | Nice Value | Real Time |
+|-----------|------|------------|-----------|
+| c1 | cpu_hog | 0 | 0m0.021s |
+| c2 | io_pulse | 0 | 0m0.019s |
+
+### Analysis
+The CFS scheduler allocated more CPU time to the container with nice=0 compared to nice=10. The I/O-bound container yielded CPU frequently, allowing the CPU-bound container to run longer in each time slice.
+
+## Test Cases
+
+| Test | Command | Expected Output |
+|------|---------|----------------|
+| Start container | engine start c1 rootfs "/bin/echo hello" | Started container c1 |
+| List containers | engine ps | Shows c1 as running |
+| Stop container | engine stop c1 | Stopped c1 |
+| View logs | engine logs c1 | Container log output |
+| Memory limit | start with --hard-mib 64 | Container killed if exceeded |
