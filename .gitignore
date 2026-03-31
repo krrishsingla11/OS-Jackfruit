@@ -32,3 +32,6 @@ logs/
 *.swp
 *~
 .vscode/
+boilerplate/rootfs/
+boilerplate/*.ko
+boilerplate/engine
