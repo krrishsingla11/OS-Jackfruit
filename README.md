@@ -61,6 +61,40 @@ sudo ./boilerplate/engine stop <id>
 sudo rmmod monitor
 ```
 
+## Demo Screenshots
+
+### 1. Multi-Container Supervision
+Two containers (c1 and c2) running simultaneously under one supervisor process.
+![Multi-container supervision](screenshots/screenshot1_multicontainer.png)
+
+### 2. Metadata Tracking
+Output of the `ps` command showing tracked container metadata including ID, PID, and STATE.
+![Metadata tracking](screenshots/screenshot2_ps.png)
+
+### 3. Bounded-Buffer Logging
+Container started and output captured through the logging pipeline.
+![Logging pipeline](screenshots/screenshot3_logging.png)
+
+### 4. CLI and IPC
+A CLI command being issued and the supervisor responding, demonstrating the UNIX domain socket IPC mechanism.
+![CLI and IPC](screenshots/screenshot4_cli_ipc.png)
+
+### 5. Soft-Limit Warning
+`dmesg` output showing soft memory limits registered for each container by the kernel module.
+![Soft limit warning](screenshots/screenshot5_soft_limit.png)
+
+### 6. Hard-Limit Enforcement
+Container stopped and state updated to `stopped` in supervisor metadata.
+![Hard limit enforcement](screenshots/screenshot6_hard_limit.png)
+
+### 7. Scheduling Experiment
+Two containers (cpu1 and cpu2) running with different priorities, demonstrating Linux CFS scheduling behavior.
+![Scheduling experiment](screenshots/screenshot7_scheduling.png)
+
+### 8. Clean Teardown
+Both containers stopped cleanly with state updated to `stopped`, no zombie processes remaining.
+![Clean teardown](screenshots/screenshot8_teardown.png)
+
 ## Engineering Analysis
 
 ### 1. Linux Namespaces
